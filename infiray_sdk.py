@@ -136,6 +136,30 @@ class InfiRaySDK:
         self.dll.sdk_get_camera_temp.restype = c_int
         self.dll.sdk_get_camera_temp.argtypes = [c_void_p, POINTER(c_float)]
 
+        # USBSDK_API int sdk_get_FPA_temp(IRNETHANDLE p, float *fTemp);
+        self.dll.sdk_get_FPA_temp.restype = c_int
+        self.dll.sdk_get_FPA_temp.argtypes = [c_void_p, POINTER(c_float)]
+
+        # USBSDK_API int CoreType(IRNETHANDLE p);
+        self.dll.CoreType.restype = c_int
+        self.dll.CoreType.argtypes = [c_void_p]
+
+        # USBSDK_API int TempMeasureType(IRNETHANDLE p);
+        self.dll.TempMeasureType.restype = c_int
+        self.dll.TempMeasureType.argtypes = [c_void_p]
+
+        # USBSDK_API int sdk_get_SN_PN(IRNETHANDLE p, char *strSN, int *iLenSN, char* strPN, int *iLenPN);
+        self.dll.sdk_get_SN_PN.restype = c_int
+        self.dll.sdk_get_SN_PN.argtypes = [c_void_p, c_char_p, POINTER(c_int), c_char_p, POINTER(c_int)]
+
+        # USBSDK_API int sdk_read_temp_unit(IRNETHANDLE p, unsigned char* ucUnit);
+        self.dll.sdk_read_temp_unit.restype = c_int
+        self.dll.sdk_read_temp_unit.argtypes = [c_void_p, POINTER(c_ubyte)]
+
+        # USBSDK_API int sdk_set_temp_unit(IRNETHANDLE p, unsigned char ucUnit);
+        self.dll.sdk_set_temp_unit.restype = c_int
+        self.dll.sdk_set_temp_unit.argtypes = [c_void_p, c_ubyte]
+
         # USBSDK_API int sdk_get_width(IRNETHANDLE p, int *iValue);
         self.dll.sdk_get_width.restype = c_int
         self.dll.sdk_get_width.argtypes = [c_void_p, POINTER(c_int)]
@@ -199,6 +223,35 @@ class InfiRaySDK:
         val = c_float()
         ret = self.dll.sdk_get_camera_temp(self.handle, byref(val))
         return val.value if ret == 0 else None
+
+    def get_fpa_temp(self):
+        val = c_float()
+        ret = self.dll.sdk_get_FPA_temp(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_core_type(self):
+        return self.dll.CoreType(self.handle)
+
+    def get_temp_measure_type(self):
+        return self.dll.TempMeasureType(self.handle)
+
+    def get_sn_pn(self):
+        sn = create_string_buffer(MAX_PATH)
+        pn = create_string_buffer(MAX_PATH)
+        sn_len = c_int(MAX_PATH)
+        pn_len = c_int(MAX_PATH)
+        ret = self.dll.sdk_get_SN_PN(self.handle, sn, byref(sn_len), pn, byref(pn_len))
+        if ret == 0:
+            return sn.value.decode('utf-8', 'ignore'), pn.value.decode('utf-8', 'ignore')
+        return None, None
+
+    def get_temp_unit(self):
+        unit = c_ubyte()
+        ret = self.dll.sdk_read_temp_unit(self.handle, byref(unit))
+        return unit.value if ret == 0 else None
+
+    def set_temp_unit(self, unit):
+        return self.dll.sdk_set_temp_unit(self.handle, c_ubyte(unit)) == 0
 
     def shutter_correction(self, core_type=2, type=1):
         return self.dll.sdk_shutter_correction(self.handle, core_type, type)

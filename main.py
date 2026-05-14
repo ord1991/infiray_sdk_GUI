@@ -7,7 +7,7 @@ import cv2
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QComboBox,
                              QGroupBox, QFormLayout, QSpinBox, QDoubleSpinBox,
-                             QMessageBox, QFileDialog)
+                             QMessageBox, QFileDialog, QCheckBox)
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen
 
@@ -157,6 +157,39 @@ class CameraControlApp(QMainWindow):
         info_group.setLayout(info_layout)
         controls_layout.addWidget(info_group)
 
+        # Scene Statistics Group
+        stats_group = QGroupBox("Scene Statistics")
+        stats_layout = QFormLayout()
+        self.lbl_max_temp = QLabel("N/A")
+        self.lbl_min_temp = QLabel("N/A")
+        self.lbl_center_temp = QLabel("N/A")
+        stats_layout.addRow("Max Temp:", self.lbl_max_temp)
+        stats_layout.addRow("Min Temp:", self.lbl_min_temp)
+        stats_layout.addRow("Center Temp:", self.lbl_center_temp)
+        stats_group.setLayout(stats_layout)
+        controls_layout.addWidget(stats_group)
+
+        # Histogram Group
+        hist_group = QGroupBox("Histogram")
+        hist_layout = QVBoxLayout()
+        self.hist_label = QLabel()
+        self.hist_label.setFixedSize(256, 120)
+        self.hist_label.setStyleSheet("background-color: #111; border: 1px solid #444;")
+        hist_layout.addWidget(self.hist_label)
+        hist_group.setLayout(hist_layout)
+        controls_layout.addWidget(hist_group)
+
+        # Raw Data Group
+        raw_group = QGroupBox("Raw Data")
+        raw_layout = QVBoxLayout()
+        self.chk_view_raw = QCheckBox("View Raw (16-bit)")
+        self.btn_save_raw = QPushButton("Save Raw Data")
+        self.btn_save_raw.clicked.connect(self.save_raw_data)
+        raw_layout.addWidget(self.chk_view_raw)
+        raw_layout.addWidget(self.btn_save_raw)
+        raw_group.setLayout(raw_layout)
+        controls_layout.addWidget(raw_group)
+
         controls_layout.addStretch(1)
 
         self.timer = QTimer()
@@ -293,10 +326,23 @@ class CameraControlApp(QMainWindow):
                 self.lbl_cam_temp.setText(f"Camera Temp: {t:.2f} C")
 
     def display_video(self, frame):
-        self.current_frame = frame
-        h, w, ch = frame.shape
-        bytes_per_line = ch * w
-        qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        if self.chk_view_raw.isChecked() and self.current_temp_frame is not None:
+            # Normalize 16-bit raw data to 8-bit for display
+            raw = self.current_temp_frame.astype(np.float32)
+            rmin, rmax = np.min(raw), np.max(raw)
+            if rmax > rmin:
+                raw_norm = ((raw - rmin) / (rmax - rmin) * 255).astype(np.uint8)
+            else:
+                raw_norm = np.zeros_like(raw, dtype=np.uint8)
+
+            h, w = raw_norm.shape
+            qimg = QImage(raw_norm.data, w, h, w, QImage.Format_Grayscale8)
+        else:
+            self.current_frame = frame
+            h, w, ch = frame.shape
+            bytes_per_line = ch * w
+            qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
         pixmap = QPixmap.fromImage(qimg)
         pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio)
 
@@ -325,16 +371,29 @@ class CameraControlApp(QMainWindow):
 
     def process_temp(self, temp_frame):
         self.current_temp_frame = temp_frame
+
+        # Global Statistics
+        h, w = temp_frame.shape
+        max_t = np.max(temp_frame) / 100.0
+        min_t = np.min(temp_frame) / 100.0
+        center_t = temp_frame[h // 2, w // 2] / 100.0
+
+        self.lbl_max_temp.setText(f"{max_t:.1f} C")
+        self.lbl_min_temp.setText(f"{min_t:.1f} C")
+        self.lbl_center_temp.setText(f"{center_t:.1f} C")
+
+        self.update_histogram(temp_frame)
+
         if self.roi_rect:
-            x, y, w, h = self.roi_rect
-            y2, x2 = min(y + h, temp_frame.shape[0]), min(x + w, temp_frame.shape[1])
+            x, y, w_roi, h_roi = self.roi_rect
+            y2, x2 = min(y + h_roi, h), min(x + w_roi, w)
             y1, x1 = max(0, y), max(0, x)
             roi_data = temp_frame[y1:y2, x1:x2]
             if roi_data.size > 0:
-                max_t = np.max(roi_data) / 100.0
-                min_t = np.min(roi_data) / 100.0
-                avg_t = np.mean(roi_data) / 100.0
-                self.lbl_info.setText(f"ROI Temp:\nMax: {max_t:.1f} C\nMin: {min_t:.1f} C\nAvg: {avg_t:.1f} C")
+                max_roi = np.max(roi_data) / 100.0
+                min_roi = np.min(roi_data) / 100.0
+                avg_roi = np.mean(roi_data) / 100.0
+                self.lbl_info.setText(f"ROI Temp:\nMax: {max_roi:.1f} C\nMin: {min_roi:.1f} C\nAvg: {avg_roi:.1f} C")
 
     def get_video_click_pos(self, event):
         if not self.video_label.pixmap(): return None
@@ -383,6 +442,35 @@ class CameraControlApp(QMainWindow):
     def clear_roi(self):
         self.roi_rect = None
         self.lbl_info.setText("Draw rectangle on video to measure ROI.")
+
+    def update_histogram(self, temp_frame):
+        # Calculate histogram of temperature data
+        # temp_frame is uint16, values are Temp*100
+        min_val = int(np.min(temp_frame))
+        max_val = int(np.max(temp_frame))
+
+        if max_val <= min_val: return
+
+        hist = cv2.calcHist([temp_frame.astype(np.float32)], [0], None, [256], [min_val, max_val])
+        cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
+
+        # Draw histogram
+        width, height = 256, 100
+        hist_img = np.zeros((height, width, 3), dtype=np.uint8)
+        # Use height-1 to stay within image bounds
+        for i in range(1, 256):
+            cv2.line(hist_img, (i - 1, (height - 1) - int(hist[i - 1] * (height - 1) / 100)),
+                     (i, (height - 1) - int(hist[i] * (height - 1) / 100)), (0, 255, 0), 1)
+
+        qimg = QImage(hist_img.data, width, height, width * 3, QImage.Format_RGB888)
+        self.hist_label.setPixmap(QPixmap.fromImage(qimg))
+
+    def save_raw_data(self):
+        if self.current_temp_frame is not None:
+            filename, _ = QFileDialog.getSaveFileName(self, "Save Raw Data", "thermal_raw.npy", "NumPy files (*.npy)")
+            if filename:
+                np.save(filename, self.current_temp_frame)
+                self.statusBar().showMessage(f"Raw data saved to {filename}", 3000)
 
     def closeEvent(self, event):
         if self.sdk:
