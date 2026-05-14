@@ -293,7 +293,7 @@ class CameraControlApp(QMainWindow):
                 self.lbl_cam_temp.setText(f"Camera Temp: {t:.2f} C")
 
     def display_video(self, frame):
-        self.current_frame = frame.copy()
+        self.current_frame = frame
         h, w, ch = frame.shape
         bytes_per_line = ch * w
         qimg = QImage(frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
@@ -324,7 +324,7 @@ class CameraControlApp(QMainWindow):
         self.video_label.setPixmap(pixmap)
 
     def process_temp(self, temp_frame):
-        self.current_temp_frame = temp_frame.copy()
+        self.current_temp_frame = temp_frame
         if self.roi_rect:
             x, y, w, h = self.roi_rect
             y2, x2 = min(y + h, temp_frame.shape[0]), min(x + w, temp_frame.shape[1])
