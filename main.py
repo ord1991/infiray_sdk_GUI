@@ -353,14 +353,12 @@ class CameraControlApp(QMainWindow):
         try:
             data = temp_frame.astype(np.float32)
             rmin, rmax = np.min(data), np.max(data)
-            # Add small buffer to range to handle uniform data
             if rmax <= rmin: rmax = rmin + 1.0
 
             hist = cv2.calcHist([data], [0], None, [256], [rmin, rmax])
             cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
 
             h_img = np.zeros((100, 256, 3), dtype=np.uint8)
-            # Draw filled bars for better visibility
             for i in range(256):
                 val = int(hist[i][0])
                 if val > 0:

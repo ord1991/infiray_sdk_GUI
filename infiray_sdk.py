@@ -48,6 +48,7 @@ TempCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
 
 class InfiRaySDK:
     def __init__(self, dll_path):
+        # Change directory to load dependencies correctly
         self.lib_dir = os.path.dirname(os.path.abspath(dll_path))
         self.original_cwd = os.getcwd()
         os.chdir(self.lib_dir)
@@ -76,6 +77,7 @@ class InfiRaySDK:
         self._setup_functions()
         self.handle = None
 
+        # Keep references to callbacks to prevent GC
         self.c_video_callback = None
         self.c_temp_callback = None
 
@@ -245,7 +247,7 @@ class InfiRaySDK:
         ret = self.dll.sdk_get_color_plate(self.handle, core_type, byref(color_plate))
         return color_plate.value if ret == 0 else None
 
-    def get_env_param(self):
+    def get_envir_param(self):
         params = envir_param()
         ret = self.dll.sdk_get_envir_param(self.handle, byref(params))
         return params if ret == 0 else None
