@@ -221,7 +221,7 @@ class CameraControlApp(QMainWindow):
             if w > 0 and h > 0:
                 self.width, self.height = w, h
 
-            def py_video_cb(pBuffer, w, h, context):
+            def py_video_cb(pBuffer, w, h, _):
                 if pBuffer:
                     # SDK returns YUV422 (UYVY format), meaning 2 bytes per pixel
                     size = w * h * 2
@@ -233,7 +233,7 @@ class CameraControlApp(QMainWindow):
                     arr_rgb = cv2.cvtColor(arr_yuv, cv2.COLOR_YUV2RGB_YUYV)
                     self.emitter.update_video.emit(arr_rgb)
 
-            def py_temp_cb(pBuffer, w, h, context):
+            def py_temp_cb(pBuffer, w, h, _):
                 if pBuffer:
                     size = w * h * 2
                     BufferType = ctypes.c_ubyte * size
