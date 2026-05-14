@@ -1,6 +1,7 @@
 import sys
 import os
 import ctypes
+import re
 import numpy as np
 import cv2
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
@@ -188,7 +189,6 @@ class CameraControlApp(QMainWindow):
             com_name = dev_list.ComNameInfo[i].cComPort.decode('utf-8', 'ignore')
             port_num = 0
             try:
-                import re
                 match = re.search(r'\d+', com_name)
                 if match:
                     port_num = int(match.group())
@@ -196,12 +196,11 @@ class CameraControlApp(QMainWindow):
                 pass
             com_ports.append(port_num)
 
-        default_port = com_ports[0] if com_ports else 0
-
         for i in range(dev_list.iNumber):
             name = dev_list.DevInfo[i].cName.decode('utf-8', 'ignore')
-            self.devices.append((i, name, default_port))
-            self.cb_devices.addItem(f"{i}: {name} (Port: {default_port})")
+            port_num = com_ports[i] if i < len(com_ports) else 0
+            self.devices.append((i, name, port_num))
+            self.cb_devices.addItem(f"{i}: {name} (Port: {port_num})")
 
     def connect_device(self):
         if not self.sdk: return
