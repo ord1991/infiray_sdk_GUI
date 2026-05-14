@@ -42,6 +42,7 @@ class envir_param(Structure):
 
 
 # Callback types
+# Using CFUNCTYPE (cdecl) as standard for most C++ SDKs unless specified
 VideoCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
 TempCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
 
@@ -247,7 +248,7 @@ class InfiRaySDK:
         ret = self.dll.sdk_get_color_plate(self.handle, core_type, byref(color_plate))
         return color_plate.value if ret == 0 else None
 
-    def get_envir_param(self):
+    def get_env_param(self):
         params = envir_param()
         ret = self.dll.sdk_get_envir_param(self.handle, byref(params))
         return params if ret == 0 else None

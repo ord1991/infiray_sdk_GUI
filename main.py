@@ -242,7 +242,7 @@ class CameraControlApp(QMainWindow):
         res = self.sdk.open_device(idx, port_indx)
         self.sdk_mutex.unlock()
 
-        if res:
+        if self.sdk.open_device(idx, port_indx):
             self.connected = True
             logging.info(f"Connected to {dev_name}")
             self.video_cb_count = 0
