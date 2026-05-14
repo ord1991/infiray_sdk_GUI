@@ -164,9 +164,9 @@ class CameraControlApp(QMainWindow):
         # Scene Statistics Group
         stats_group = QGroupBox("Scene Statistics")
         stats_layout = QFormLayout()
-        self.lbl_max_temp = QLabel("Waiting for data...")
-        self.lbl_min_temp = QLabel("Waiting for data...")
-        self.lbl_center_temp = QLabel("Waiting for data...")
+        self.lbl_max_temp = QLabel("N/A")
+        self.lbl_min_temp = QLabel("N/A")
+        self.lbl_center_temp = QLabel("N/A")
         stats_layout.addRow("Max Temp:", self.lbl_max_temp)
         stats_layout.addRow("Min Temp:", self.lbl_min_temp)
         stats_layout.addRow("Center Temp:", self.lbl_center_temp)
@@ -293,14 +293,28 @@ class CameraControlApp(QMainWindow):
             if w > 0 and h > 0:
                 self.width, self.height = w, h
 
-            ct = self.sdk.get_core_type()
-            tm = self.sdk.get_temp_measure_type()
-            sn, pn = self.sdk.get_sn_pn()
-            logging.info(f"Device Info: CoreType={ct}, TempMeasureType={tm}, SN={sn}, PN={pn}")
-            self.core_type = ct if ct > 0 else 2
+            def py_video_cb(pBuffer, w, h, _):
+                if pBuffer:
+                    # SDK returns YUV422 (UYVY format), meaning 2 bytes per pixel
+                    size = w * h * 2
+                    BufferType = ctypes.c_ubyte * size
+                    buf = ctypes.cast(pBuffer, ctypes.POINTER(BufferType)).contents
+                    # Use .copy() to ensure thread safety of the C buffer before emitting to GUI
+                    arr_yuv = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 2)).copy()
+                    # Convert UYVY to RGB for PyQt
+                    arr_rgb = cv2.cvtColor(arr_yuv, cv2.COLOR_YUV2RGB_YUYV)
+                    self.emitter.update_video.emit(arr_rgb)
 
-            # Ensure temp measurement is active
-            self.sdk.set_temp_unit(0) # 0: Celsius
+            def py_temp_cb(pBuffer, w, h, _):
+                if pBuffer:
+                    size = w * h * 2
+                    BufferType = ctypes.c_ubyte * size
+                    buf = ctypes.cast(pBuffer, ctypes.POINTER(BufferType)).contents
+                    arr = np.frombuffer(buf, dtype=np.uint16).reshape((h, w)).copy()
+                    self.emitter.update_temp.emit(arr)
+
+            self.sdk.set_video_callback(py_video_cb)
+            self.sdk.set_temp_callback(py_temp_cb)
 
             self.btn_connect.setEnabled(False)
             self.btn_disconnect.setEnabled(True)
@@ -351,24 +365,17 @@ class CameraControlApp(QMainWindow):
                 self.lbl_cam_temp.setText(f"Camera Temp: {t:.2f} C")
 
     def display_video(self, frame):
-        if self.chk_view_raw.isChecked():
-            if self.current_temp_frame is not None:
-                # Normalize 16-bit raw data to 8-bit for display
-                raw = self.current_temp_frame.astype(np.float32)
-                rmin, rmax = np.min(raw), np.max(raw)
-                if rmax > rmin:
-                    raw_norm = ((raw - rmin) / (rmax - rmin) * 255.0).astype(np.uint8)
-                else:
-                    raw_norm = np.zeros_like(raw, dtype=np.uint8)
-
-                h, w = raw_norm.shape
-                qimg = QImage(raw_norm.data, w, h, w, QImage.Format_Grayscale8).copy()
+        if self.chk_view_raw.isChecked() and self.current_temp_frame is not None:
+            # Normalize 16-bit raw data to 8-bit for display
+            raw = self.current_temp_frame.astype(np.float32)
+            rmin, rmax = np.min(raw), np.max(raw)
+            if rmax > rmin:
+                raw_norm = ((raw - rmin) / (rmax - rmin) * 255).astype(np.uint8)
             else:
-                # If no temp frame yet, show the normal frame but maybe with a status message
-                self.current_frame = frame
-                h, w, ch = frame.shape
-                qimg = QImage(frame.data, w, h, ch * w, QImage.Format_RGB888).copy()
-                self.statusBar().showMessage("Waiting for 16-bit temperature data...", 1000)
+                raw_norm = np.zeros_like(raw, dtype=np.uint8)
+
+            h, w = raw_norm.shape
+            qimg = QImage(raw_norm.data, w, h, w, QImage.Format_Grayscale8)
         else:
             self.current_frame = frame
             h, w, ch = frame.shape
@@ -476,38 +483,26 @@ class CameraControlApp(QMainWindow):
         self.lbl_info.setText("Draw rectangle on video to measure ROI.")
 
     def update_histogram(self, temp_frame):
-        try:
-            # Calculate histogram of temperature data
-            # temp_frame is uint16, values are Temp*100
-            min_val = float(np.min(temp_frame))
-            max_val = float(np.max(temp_frame))
+        # Calculate histogram of temperature data
+        # temp_frame is uint16, values are Temp*100
+        min_val = int(np.min(temp_frame))
+        max_val = int(np.max(temp_frame))
 
-            if max_val <= min_val:
-                logging.warning(f"Histogram: max_val ({max_val}) <= min_val ({min_val})")
-                return
+        if max_val <= min_val: return
 
-            # Use 256 bins between min and max value
-            hist = cv2.calcHist([temp_frame.astype(np.float32)], [0], None, [256], [min_val, max_val])
-            cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
+        hist = cv2.calcHist([temp_frame.astype(np.float32)], [0], None, [256], [min_val, max_val])
+        cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
 
-            # Draw histogram
-            width, height = 256, 100
-            hist_img = np.zeros((height, width, 3), dtype=np.uint8)
-            # Draw background grid
-            for i in range(0, 256, 64):
-                cv2.line(hist_img, (i, 0), (i, height), (40, 40, 40), 1)
+        # Draw histogram
+        width, height = 256, 100
+        hist_img = np.zeros((height, width, 3), dtype=np.uint8)
+        # Use height-1 to stay within image bounds
+        for i in range(1, 256):
+            cv2.line(hist_img, (i - 1, (height - 1) - int(hist[i - 1] * (height - 1) / 100)),
+                     (i, (height - 1) - int(hist[i] * (height - 1) / 100)), (0, 255, 0), 1)
 
-            # Use height-1 to stay within image bounds
-            for i in range(1, 256):
-                y1 = int((height - 1) - (hist[i-1][0] * (height - 1) / 100.0))
-                y2 = int((height - 1) - (hist[i][0] * (height - 1) / 100.0))
-                cv2.line(hist_img, (i - 1, y1), (i, y2), (0, 255, 0), 1)
-
-            # Ensure we make a copy for the QImage to avoid memory issues with ephemeral numpy arrays
-            qimg = QImage(hist_img.data, width, height, width * 3, QImage.Format_RGB888).copy()
-            self.hist_label.setPixmap(QPixmap.fromImage(qimg))
-        except Exception as e:
-            logging.error(f"Error updating histogram: {e}")
+        qimg = QImage(hist_img.data, width, height, width * 3, QImage.Format_RGB888)
+        self.hist_label.setPixmap(QPixmap.fromImage(qimg))
 
     def save_raw_data(self):
         if self.current_temp_frame is not None:
