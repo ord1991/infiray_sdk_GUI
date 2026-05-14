@@ -48,13 +48,10 @@ TempCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
 
 class InfiRaySDK:
     def __init__(self, dll_path):
-        # Change directory to load dependencies like outPaletteFTII.dat correctly
         self.lib_dir = os.path.dirname(os.path.abspath(dll_path))
         self.original_cwd = os.getcwd()
         os.chdir(self.lib_dir)
 
-        # For Python 3.8+ on Windows, we need to explicitly add the DLL directory
-        # so its dependencies are found.
         if sys.platform == 'win32' and sys.version_info >= (3, 8):
             try:
                 os.add_dll_directory(self.lib_dir)
@@ -62,9 +59,12 @@ class InfiRaySDK:
                 pass
 
         try:
-            # We can also pass the absolute path directly. Using absolute path + winmode for python 3.8+
-            if sys.version_info >= (3, 8) and sys.platform == 'win32':
-                self.dll = ctypes.CDLL(dll_path, winmode=0)
+            # Using WinDLL for __stdcall convention on Windows
+            if sys.platform == 'win32':
+                if sys.version_info >= (3, 8):
+                    self.dll = ctypes.WinDLL(dll_path, winmode=0)
+                else:
+                    self.dll = ctypes.WinDLL(dll_path)
             else:
                 self.dll = ctypes.CDLL(dll_path)
         except Exception as e:
@@ -76,75 +76,74 @@ class InfiRaySDK:
         self._setup_functions()
         self.handle = None
 
+        self.c_video_callback = None
+        self.c_temp_callback = None
+
     def _setup_functions(self):
-        # USBSDK_API IRNETHANDLE sdk_create();
         self.dll.sdk_create.restype = c_void_p
         self.dll.sdk_create.argtypes = []
 
-        # USBSDK_API int sdk_loginDevice(IRNETHANDLE hHandle, HWND hWnd);
         self.dll.sdk_loginDevice.restype = c_int
         self.dll.sdk_loginDevice.argtypes = [c_void_p, c_void_p]
 
-        # USBSDK_API void ReleaseSDK(IRNETHANDLE p);
         self.dll.ReleaseSDK.restype = None
         self.dll.ReleaseSDK.argtypes = [c_void_p]
 
-        # USBSDK_API int SearchDevice(IRNETHANDLE p, DeviceLst &devList);
         self.dll.SearchDevice.restype = c_int
         self.dll.SearchDevice.argtypes = [c_void_p, POINTER(DeviceLst)]
 
-        # USBSDK_API bool OpenDevice(IRNETHANDLE p, int iGetCurSel, int portIndx);
         self.dll.OpenDevice.restype = c_bool
         self.dll.OpenDevice.argtypes = [c_void_p, c_int, c_int]
 
-        # USBSDK_API void CloseDevice(IRNETHANDLE p);
         self.dll.CloseDevice.restype = None
         self.dll.CloseDevice.argtypes = [c_void_p]
 
-        # USBSDK_API void __stdcall SetVideoCallBack(IRNETHANDLE p, VideoCallBack pVideoCallBack, void *pContext);
-        # Typedef in header: typedef void(*VideoCallBack)(unsigned char *pBuffer, int iWidth, int iHeight, void *pContext);
-        # This typedef doesn't specify __stdcall, so the callback itself is __cdecl.
-        self.VideoCallBackType = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
-        self.TempCallBackType = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+        self.VideoCallBackType = VideoCallBack
+        self.TempCallBackType = TempCallBack
 
-        if sys.platform == 'win32':
-            # The registration functions themselves are marked __stdcall in the header.
-            self.SetVideoCallBack = WINFUNCTYPE(None, c_void_p, self.VideoCallBackType, c_void_p)(("SetVideoCallBack", self.dll))
-            self.SetTempCallBack = WINFUNCTYPE(None, c_void_p, self.TempCallBackType, c_void_p)(("SetTempCallBack", self.dll))
-        else:
-            self.SetVideoCallBack = self.dll.SetVideoCallBack
-            self.SetVideoCallBack.restype = None
-            self.SetVideoCallBack.argtypes = [c_void_p, self.VideoCallBackType, c_void_p]
+        # SetVideoCallBack and SetTempCallBack are __stdcall, which WinDLL handles automatically
+        self.dll.SetVideoCallBack.restype = None
+        self.dll.SetVideoCallBack.argtypes = [c_void_p, self.VideoCallBackType, c_void_p]
 
-            self.SetTempCallBack = self.dll.SetTempCallBack
-            self.SetTempCallBack.restype = None
-            self.SetTempCallBack.argtypes = [c_void_p, self.TempCallBackType, c_void_p]
+        self.dll.SetTempCallBack.restype = None
+        self.dll.SetTempCallBack.argtypes = [c_void_p, self.TempCallBackType, c_void_p]
 
-        # USBSDK_API int sdk_shutter_correction(IRNETHANDLE p, int iCoreType, int type);
         self.dll.sdk_shutter_correction.restype = c_int
         self.dll.sdk_shutter_correction.argtypes = [c_void_p, c_int, c_int]
 
-        # USBSDK_API int sdk_set_color_plate(IRNETHANDLE p, int iType, int color_plate);
         self.dll.sdk_set_color_plate.restype = c_int
         self.dll.sdk_set_color_plate.argtypes = [c_void_p, c_int, c_int]
 
-        # USBSDK_API int sdk_get_color_plate(IRNETHANDLE p, int iType, int* color_plate);
         self.dll.sdk_get_color_plate.restype = c_int
         self.dll.sdk_get_color_plate.argtypes = [c_void_p, c_int, POINTER(c_int)]
 
-        # USBSDK_API int sdk_get_camera_temp(IRNETHANDLE p, float *fTemp);
         self.dll.sdk_get_camera_temp.restype = c_int
         self.dll.sdk_get_camera_temp.argtypes = [c_void_p, POINTER(c_float)]
 
-        # USBSDK_API int sdk_get_width(IRNETHANDLE p, int *iValue);
+        self.dll.sdk_get_FPA_temp.restype = c_int
+        self.dll.sdk_get_FPA_temp.argtypes = [c_void_p, POINTER(c_float)]
+
+        self.dll.CoreType.restype = c_int
+        self.dll.CoreType.argtypes = [c_void_p]
+
+        self.dll.TempMeasureType.restype = c_int
+        self.dll.TempMeasureType.argtypes = [c_void_p]
+
+        self.dll.sdk_get_SN_PN.restype = c_int
+        self.dll.sdk_get_SN_PN.argtypes = [c_void_p, c_char_p, POINTER(c_int), c_char_p, POINTER(c_int)]
+
+        self.dll.sdk_read_temp_unit.restype = c_int
+        self.dll.sdk_read_temp_unit.argtypes = [c_void_p, POINTER(c_ubyte)]
+
+        self.dll.sdk_set_temp_unit.restype = c_int
+        self.dll.sdk_set_temp_unit.argtypes = [c_void_p, c_ubyte]
+
         self.dll.sdk_get_width.restype = c_int
         self.dll.sdk_get_width.argtypes = [c_void_p, POINTER(c_int)]
 
-        # USBSDK_API int sdk_get_height(IRNETHANDLE p, int *iValue);
         self.dll.sdk_get_height.restype = c_int
         self.dll.sdk_get_height.argtypes = [c_void_p, POINTER(c_int)]
 
-        # Environment params
         self.dll.sdk_set_envir_param.restype = c_int
         self.dll.sdk_set_envir_param.argtypes = [c_void_p, envir_param]
 
@@ -153,6 +152,12 @@ class InfiRaySDK:
 
         self.dll.sdk_envir_effect.restype = c_int
         self.dll.sdk_envir_effect.argtypes = [c_void_p]
+
+        self.dll.sdk_get_wtr_status.restype = c_int
+        self.dll.sdk_get_wtr_status.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.sdk_set_wtr_status.restype = c_int
+        self.dll.sdk_set_wtr_status.argtypes = [c_void_p, c_int]
 
     def create(self):
         self.handle = self.dll.sdk_create()
@@ -164,7 +169,7 @@ class InfiRaySDK:
 
     def search_device(self):
         dev_list = DeviceLst()
-        ret = self.dll.SearchDevice(self.handle, byref(dev_list))
+        self.dll.SearchDevice(self.handle, byref(dev_list))
         return dev_list
 
     def open_device(self, iGetCurSel, portIndx):
@@ -179,11 +184,11 @@ class InfiRaySDK:
 
     def set_video_callback(self, py_callback):
         self.c_video_callback = self.VideoCallBackType(py_callback)
-        self.SetVideoCallBack(self.handle, self.c_video_callback, None)
+        self.dll.SetVideoCallBack(self.handle, self.c_video_callback, None)
 
     def set_temp_callback(self, py_callback):
         self.c_temp_callback = self.TempCallBackType(py_callback)
-        self.SetTempCallBack(self.handle, self.c_temp_callback, None)
+        self.dll.SetTempCallBack(self.handle, self.c_temp_callback, None)
 
     def get_width(self):
         val = c_int()
@@ -200,6 +205,35 @@ class InfiRaySDK:
         ret = self.dll.sdk_get_camera_temp(self.handle, byref(val))
         return val.value if ret == 0 else None
 
+    def get_fpa_temp(self):
+        val = c_float()
+        ret = self.dll.sdk_get_FPA_temp(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_core_type(self):
+        return self.dll.CoreType(self.handle)
+
+    def get_temp_measure_type(self):
+        return self.dll.TempMeasureType(self.handle)
+
+    def get_sn_pn(self):
+        sn = create_string_buffer(MAX_PATH)
+        pn = create_string_buffer(MAX_PATH)
+        sn_len = c_int(MAX_PATH)
+        pn_len = c_int(MAX_PATH)
+        ret = self.dll.sdk_get_SN_PN(self.handle, sn, byref(sn_len), pn, byref(pn_len))
+        if ret == 0:
+            return sn.value.decode('utf-8', 'ignore'), pn.value.decode('utf-8', 'ignore')
+        return "", ""
+
+    def get_temp_unit(self):
+        unit = c_ubyte()
+        ret = self.dll.sdk_read_temp_unit(self.handle, byref(unit))
+        return unit.value if ret == 0 else None
+
+    def set_temp_unit(self, unit):
+        return self.dll.sdk_set_temp_unit(self.handle, c_ubyte(unit)) == 0
+
     def shutter_correction(self, core_type=2, type=1):
         return self.dll.sdk_shutter_correction(self.handle, core_type, type)
 
@@ -211,7 +245,7 @@ class InfiRaySDK:
         ret = self.dll.sdk_get_color_plate(self.handle, core_type, byref(color_plate))
         return color_plate.value if ret == 0 else None
 
-    def get_envir_param(self):
+    def get_env_param(self):
         params = envir_param()
         ret = self.dll.sdk_get_envir_param(self.handle, byref(params))
         return params if ret == 0 else None
@@ -221,3 +255,11 @@ class InfiRaySDK:
         ret1 = self.dll.sdk_set_envir_param(self.handle, params)
         ret2 = self.dll.sdk_envir_effect(self.handle)
         return ret1 == 0 and ret2 == 0
+
+    def get_wtr_status(self):
+        val = c_int()
+        ret = self.dll.sdk_get_wtr_status(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def set_wtr_status(self, status):
+        return self.dll.sdk_set_wtr_status(self.handle, c_int(status)) == 0
