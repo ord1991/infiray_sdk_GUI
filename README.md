@@ -60,6 +60,7 @@ infiray_gui/
     ├── USBSDK.h
     ├── InfEntity.h
     └── outPaletteFTII.dat# Palette data configuration
+
 ⚠️ Notes
 The included USBSDK.dll and dependencies in the lib directory are 64-bit libraries provided by InfiRay. Make sure you are running a 64-bit installation of Python.
 If you see a Failed to open device error, verify that the USB is properly connected and no other application is currently locking the camera's COM port.
