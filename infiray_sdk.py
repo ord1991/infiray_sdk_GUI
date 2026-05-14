@@ -102,18 +102,23 @@ class InfiRaySDK:
         self.dll.CloseDevice.argtypes = [c_void_p]
 
         # USBSDK_API void __stdcall SetVideoCallBack(IRNETHANDLE p, VideoCallBack pVideoCallBack, void *pContext);
+        # Typedef in header: typedef void(*VideoCallBack)(unsigned char *pBuffer, int iWidth, int iHeight, void *pContext);
+        # This typedef doesn't specify __stdcall, so the callback itself is __cdecl.
+        self.VideoCallBackType = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+        self.TempCallBackType = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+
         if sys.platform == 'win32':
-            self.VideoCallBackType = WINFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
-            self.TempCallBackType = WINFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+            # The registration functions themselves are marked __stdcall in the header.
+            self.SetVideoCallBack = WINFUNCTYPE(None, c_void_p, self.VideoCallBackType, c_void_p)(("SetVideoCallBack", self.dll))
+            self.SetTempCallBack = WINFUNCTYPE(None, c_void_p, self.TempCallBackType, c_void_p)(("SetTempCallBack", self.dll))
         else:
-            self.VideoCallBackType = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
-            self.TempCallBackType = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+            self.SetVideoCallBack = self.dll.SetVideoCallBack
+            self.SetVideoCallBack.restype = None
+            self.SetVideoCallBack.argtypes = [c_void_p, self.VideoCallBackType, c_void_p]
 
-        self.dll.SetVideoCallBack.restype = None
-        self.dll.SetVideoCallBack.argtypes = [c_void_p, self.VideoCallBackType, c_void_p]
-
-        self.dll.SetTempCallBack.restype = None
-        self.dll.SetTempCallBack.argtypes = [c_void_p, self.TempCallBackType, c_void_p]
+            self.SetTempCallBack = self.dll.SetTempCallBack
+            self.SetTempCallBack.restype = None
+            self.SetTempCallBack.argtypes = [c_void_p, self.TempCallBackType, c_void_p]
 
         # USBSDK_API int sdk_shutter_correction(IRNETHANDLE p, int iCoreType, int type);
         self.dll.sdk_shutter_correction.restype = c_int
@@ -174,11 +179,11 @@ class InfiRaySDK:
 
     def set_video_callback(self, py_callback):
         self.c_video_callback = self.VideoCallBackType(py_callback)
-        self.dll.SetVideoCallBack(self.handle, self.c_video_callback, None)
+        self.SetVideoCallBack(self.handle, self.c_video_callback, None)
 
     def set_temp_callback(self, py_callback):
         self.c_temp_callback = self.TempCallBackType(py_callback)
-        self.dll.SetTempCallBack(self.handle, self.c_temp_callback, None)
+        self.SetTempCallBack(self.handle, self.c_temp_callback, None)
 
     def get_width(self):
         val = c_int()
