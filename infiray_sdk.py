@@ -61,8 +61,12 @@ class InfiRaySDK:
                 pass
 
         try:
-            if sys.version_info >= (3, 8) and sys.platform == 'win32':
-                self.dll = ctypes.CDLL(dll_path, winmode=0)
+            # Using WinDLL for __stdcall convention on Windows
+            if sys.platform == 'win32':
+                if sys.version_info >= (3, 8):
+                    self.dll = ctypes.WinDLL(dll_path, winmode=0)
+                else:
+                    self.dll = ctypes.WinDLL(dll_path)
             else:
                 self.dll = ctypes.CDLL(dll_path)
         except Exception as e:
@@ -100,18 +104,12 @@ class InfiRaySDK:
         self.VideoCallBackType = VideoCallBack
         self.TempCallBackType = TempCallBack
 
-        if sys.platform == 'win32':
-            # USBSDK_API void __stdcall SetVideoCallBack(...)
-            self.SetVideoCallBack = WINFUNCTYPE(None, c_void_p, self.VideoCallBackType, c_void_p)(("SetVideoCallBack", self.dll))
-            self.SetTempCallBack = WINFUNCTYPE(None, c_void_p, self.TempCallBackType, c_void_p)(("SetTempCallBack", self.dll))
-        else:
-            self.SetVideoCallBack = self.dll.SetVideoCallBack
-            self.SetVideoCallBack.restype = None
-            self.SetVideoCallBack.argtypes = [c_void_p, self.VideoCallBackType, c_void_p]
+        # SetVideoCallBack and SetTempCallBack are __stdcall, which WinDLL handles automatically
+        self.dll.SetVideoCallBack.restype = None
+        self.dll.SetVideoCallBack.argtypes = [c_void_p, self.VideoCallBackType, c_void_p]
 
-            self.SetTempCallBack = self.dll.SetTempCallBack
-            self.SetTempCallBack.restype = None
-            self.SetTempCallBack.argtypes = [c_void_p, self.TempCallBackType, c_void_p]
+        self.dll.SetTempCallBack.restype = None
+        self.dll.SetTempCallBack.argtypes = [c_void_p, self.TempCallBackType, c_void_p]
 
         self.dll.sdk_shutter_correction.restype = c_int
         self.dll.sdk_shutter_correction.argtypes = [c_void_p, c_int, c_int]
@@ -189,11 +187,11 @@ class InfiRaySDK:
 
     def set_video_callback(self, py_callback):
         self.c_video_callback = self.VideoCallBackType(py_callback)
-        self.SetVideoCallBack(self.handle, self.c_video_callback, None)
+        self.dll.SetVideoCallBack(self.handle, self.c_video_callback, None)
 
     def set_temp_callback(self, py_callback):
         self.c_temp_callback = self.TempCallBackType(py_callback)
-        self.SetTempCallBack(self.handle, self.c_temp_callback, None)
+        self.dll.SetTempCallBack(self.handle, self.c_temp_callback, None)
 
     def get_width(self):
         val = c_int()

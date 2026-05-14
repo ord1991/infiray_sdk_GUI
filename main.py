@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QComboBox,
                              QGroupBox, QFormLayout, QSpinBox, QDoubleSpinBox,
                              QMessageBox, QFileDialog, QCheckBox)
-from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QObject, QMutex
 from PyQt5.QtGui import QImage, QPixmap, QPainter, QPen
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -29,6 +29,7 @@ class CameraControlApp(QMainWindow):
         self.resize(1100, 800)
 
         self.sdk = None
+        self.sdk_mutex = QMutex()
         self.connected = False
         self.core_type = 2  # Default to MicroIII
 
@@ -185,7 +186,9 @@ class CameraControlApp(QMainWindow):
     def search_devices(self):
         if not self.sdk: return
         self.cb_devices.clear()
+        self.sdk_mutex.lock()
         dev_list = self.sdk.search_device()
+        self.sdk_mutex.unlock()
         logging.info(f"Devices: {dev_list.iNumber}, COM Ports: {dev_list.iComCount}")
 
         self.devices = []
@@ -231,11 +234,13 @@ class CameraControlApp(QMainWindow):
 
         dev_id, dev_name, port_indx = self.devices[idx]
         hwnd = int(self.winId()) if sys.platform == 'win32' else None
-        self.sdk.login_device(hwnd)
 
-        # Register persistent callbacks
+        self.sdk_mutex.lock()
+        self.sdk.login_device(hwnd)
         self.sdk.set_video_callback(self.py_video_cb)
         self.sdk.set_temp_callback(self.py_temp_cb)
+        res = self.sdk.open_device(idx, port_indx)
+        self.sdk_mutex.unlock()
 
         if self.sdk.open_device(idx, port_indx):
             self.connected = True
@@ -255,22 +260,27 @@ class CameraControlApp(QMainWindow):
     def _finalize_connection(self):
         if not self.connected: return
 
+        self.sdk_mutex.lock()
         w, h = self.sdk.get_width(), self.sdk.get_height()
         if w > 0: self.width, self.height = w, h
 
         ct = self.sdk.get_core_type()
         self.core_type = ct if ct > 0 else 2
-        core_names = {1:"LT", 2:"MicroIII Temp", 3:"MicroIII Image", 4:"AT200F"}
-        self.lbl_core_type.setText(core_names.get(self.core_type, f"Other ({self.core_type})"))
 
         # Enable WTR (Wide Temperature Range)
         self.sdk.set_wtr_status(1)
         # Ensure Unit is Celsius
         self.sdk.set_temp_unit(0)
+        self.sdk_mutex.unlock()
+
+        core_names = {1:"LT", 2:"MicroIII Temp", 3:"MicroIII Image", 4:"AT200F"}
+        self.lbl_core_type.setText(core_names.get(self.core_type, f"Other ({self.core_type})"))
         logging.info("Connection parameters finalized.")
 
     def disconnect_device(self):
+        self.sdk_mutex.lock()
         if self.sdk: self.sdk.close_device()
+        self.sdk_mutex.unlock()
         self.connected = False
         self.btn_connect.setEnabled(True)
         self.btn_disconnect.setEnabled(False)
@@ -279,7 +289,12 @@ class CameraControlApp(QMainWindow):
         self.diag_timer.stop()
 
     def update_diagnostics(self):
-        self.statusBar().showMessage(f"FPS: {self.video_cb_count} | Temp Hz: {self.temp_cb_count} | Cam: {self.sdk.get_camera_temp():.1f} C")
+        self.sdk_mutex.lock()
+        cam_temp = self.sdk.get_camera_temp()
+        self.sdk_mutex.unlock()
+
+        ct = cam_temp if cam_temp is not None else 0.0
+        self.statusBar().showMessage(f"FPS: {self.video_cb_count} | Temp Hz: {self.temp_cb_count} | Cam: {ct:.1f} C")
         self.video_cb_count = 0
         self.temp_cb_count = 0
 
@@ -338,7 +353,7 @@ class CameraControlApp(QMainWindow):
         try:
             data = temp_frame.astype(np.float32)
             rmin, rmax = np.min(data), np.max(data)
-            if rmax <= rmin: return
+            if rmax <= rmin: rmax = rmin + 1.0
 
             hist = cv2.calcHist([data], [0], None, [256], [rmin, rmax])
             cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
@@ -367,15 +382,25 @@ class CameraControlApp(QMainWindow):
             if path: cv2.imwrite(path, cv2.cvtColor(self.current_frame, cv2.COLOR_RGB2BGR))
 
     def do_nuc(self):
-        if self.sdk: self.sdk.shutter_correction(self.core_type, 1)
+        if self.sdk:
+            logging.info("Applying NUC...")
+            self.sdk_mutex.lock()
+            res = self.sdk.shutter_correction(self.core_type, 1)
+            self.sdk_mutex.unlock()
+            logging.info(f"NUC Result: {res}")
 
     def change_palette(self, index):
-        if self.sdk: self.sdk.set_color_plate(self.core_type, index)
+        if self.sdk:
+            self.sdk_mutex.lock()
+            self.sdk.set_color_plate(self.core_type, index)
+            self.sdk_mutex.unlock()
 
     def set_env_params(self):
         if self.sdk:
             e, a, d = int(self.sp_emis.value()*10000), int(self.sp_air_temp.value()*10000), int(self.sp_dist.value()*10000)
+            self.sdk_mutex.lock()
             self.sdk.set_envir_param(e, a, a, 50000, d)
+            self.sdk_mutex.unlock()
 
     def clear_roi(self):
         self.roi_rect = None
@@ -409,7 +434,9 @@ class CameraControlApp(QMainWindow):
 
     def closeEvent(self, event):
         self.disconnect_device()
+        self.sdk_mutex.lock()
         if self.sdk: self.sdk.release_sdk()
+        self.sdk_mutex.unlock()
         event.accept()
 
 if __name__ == '__main__':
