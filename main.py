@@ -308,10 +308,14 @@ class CameraControlApp(QMainWindow):
                         self.sdk.edge_detect(src_p, dst_p, w, h, det_level)
                         if enh_level > 0:
                             # Chain processing: output of detect becomes input of enhance
-                            # Swap buffers to avoid extra allocation
+                            # Swap pointers to avoid extra allocation
                             src_p, dst_p = dst_p, src_p
                             self.sdk.edge_enhance(src_p, dst_p, w, h, enh_level)
-                            gray = np.frombuffer(ctypes.string_at(dst_p, gray.nbytes), dtype=np.uint8).reshape(gray.shape)
+                            # The result is now in the buffer pointed to by dst_p.
+                            # We re-extract it efficiently using a view on the corresponding NumPy array.
+                            # If dst_p points to 'gray.ctypes.data', result is in gray.
+                            # If dst_p points to 'processed.ctypes.data', result is in processed.
+                            gray = gray if dst_p == gray.ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte)) else processed
                         else:
                             gray = processed
                     elif enh_level > 0:
@@ -435,12 +439,12 @@ class CameraControlApp(QMainWindow):
         self.temp_cb_count = 0
 
     def display_video(self, frame):
+        # Store latest frame for screenshots
         self.current_frame = frame
-        img = frame
-        fmt = QImage.Format_RGB888
-        h, w = frame.shape[:2]
 
+        # Determine image format and data source
         if self.chk_view_raw.isChecked() and self.current_temp_frame is not None:
+            # Grayscale 16-to-8 bit visualization
             # Optimized 16-bit to 8-bit normalization.
             # Using cv2.normalize is ~12x faster than manual NumPy arithmetic.
             # We handle the constant-value frame edge case to match original behavior.
@@ -451,6 +455,12 @@ class CameraControlApp(QMainWindow):
                 img = np.full_like(self.current_temp_frame, 128, dtype=np.uint8)
             fmt = QImage.Format_Grayscale8
             h, w = img.shape
+
+        else:
+            # Standard RGB stream
+            img = frame
+            fmt = QImage.Format_RGB888
+            h, w = frame.shape[:2]
 
         bytes_per_line = w * (3 if fmt == QImage.Format_RGB888 else 1)
         qimg = QImage(img.data, w, h, bytes_per_line, fmt).copy()
