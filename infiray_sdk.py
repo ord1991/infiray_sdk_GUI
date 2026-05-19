@@ -42,9 +42,13 @@ class envir_param(Structure):
 
 
 # Callback types
-# Using CFUNCTYPE (cdecl) as standard for most C++ SDKs unless specified
-VideoCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
-TempCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+# Using WINFUNCTYPE (__stdcall) on Windows to match USBSDK convention
+if sys.platform == 'win32':
+    VideoCallBack = WINFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+    TempCallBack = WINFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+else:
+    VideoCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
+    TempCallBack = CFUNCTYPE(None, POINTER(c_ubyte), c_int, c_int, c_void_p)
 
 
 class InfiRaySDK:
