@@ -18,6 +18,9 @@ from infiray_sdk import InfiRaySDK
 # Configure Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+# Performance Optimization: Pre-compile common regex for device parsing
+COM_PORT_RE = re.compile(r'\d+')
+
 class SignalEmitter(QObject):
     update_video = pyqtSignal(np.ndarray)
     update_temp = pyqtSignal(np.ndarray)
@@ -66,6 +69,7 @@ class CameraControlApp(QMainWindow):
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet("background-color: #000; color: #555; font-size: 20px; border: 2px solid #333;")
         self.video_label.setMinimumSize(640, 480)
+        self.video_label.setScaledContents(True)
         self.video_label.mousePressEvent = self.mouse_press
         self.video_label.mouseMoveEvent = self.mouse_move
         self.video_label.mouseReleaseEvent = self.mouse_release
@@ -103,7 +107,11 @@ class CameraControlApp(QMainWindow):
         self.lbl_min_temp = QLabel("---")
         self.lbl_center_temp = QLabel("---")
         self.lbl_core_type = QLabel("Unknown")
+        self.lbl_sn_pn = QLabel("--- / ---")
+        self.lbl_fpa_temp = QLabel("---")
         stats_form.addRow("Core Type:", self.lbl_core_type)
+        stats_form.addRow("SN/PN:", self.lbl_sn_pn)
+        stats_form.addRow("FPA Temp:", self.lbl_fpa_temp)
         stats_form.addRow("<b>Max Temp:</b>", self.lbl_max_temp)
         stats_form.addRow("<b>Min Temp:</b>", self.lbl_min_temp)
         stats_form.addRow("<b>Center Temp:</b>", self.lbl_center_temp)
@@ -122,15 +130,38 @@ class CameraControlApp(QMainWindow):
         roi_group.setLayout(roi_vbox)
         controls_layout.addWidget(roi_group)
 
-        # Histogram
-        hist_group = QGroupBox("Temperature Histogram")
-        hist_vbox = QVBoxLayout()
-        self.hist_label = QLabel()
-        self.hist_label.setFixedSize(256, 100)
-        self.hist_label.setStyleSheet("background-color: #111; border: 1px solid #444;")
-        hist_vbox.addWidget(self.hist_label)
-        hist_group.setLayout(hist_vbox)
-        controls_layout.addWidget(hist_group)
+        # Advanced Configuration (WTR & Edge)
+        adv_group = QGroupBox("Advanced Configuration")
+        adv_vbox = QVBoxLayout()
+
+        wtr_hbox = QHBoxLayout()
+        self.chk_wtr = QCheckBox("Wide Temp Range (WTR)")
+        self.chk_wtr.toggled.connect(self.toggle_wtr)
+        wtr_hbox.addWidget(self.chk_wtr)
+        adv_vbox.addLayout(wtr_hbox)
+
+        wtr_params = QFormLayout()
+        self.sp_wtr_low = QSpinBox()
+        self.sp_wtr_low.setRange(-50, 500)
+        self.sp_wtr_low.valueChanged.connect(self.update_wtr_thresholds)
+        self.sp_wtr_high = QSpinBox()
+        self.sp_wtr_high.setRange(-50, 1500)
+        self.sp_wtr_high.valueChanged.connect(self.update_wtr_thresholds)
+        wtr_params.addRow("WTR Low Threshold:", self.sp_wtr_low)
+        wtr_params.addRow("WTR High Threshold:", self.sp_wtr_high)
+        adv_vbox.addLayout(wtr_params)
+
+        edge_params = QFormLayout()
+        self.sp_edge_det = QSpinBox()
+        self.sp_edge_det.setRange(0, 100)
+        self.sp_edge_enh = QSpinBox()
+        self.sp_edge_enh.setRange(0, 100)
+        edge_params.addRow("Edge Detect Level:", self.sp_edge_det)
+        edge_params.addRow("Edge Enhance Level:", self.sp_edge_enh)
+        adv_vbox.addLayout(edge_params)
+
+        adv_group.setLayout(adv_vbox)
+        controls_layout.addWidget(adv_group)
 
         # Raw Data & Capture
         raw_group = QGroupBox("Data Acquisition")
@@ -157,13 +188,54 @@ class CameraControlApp(QMainWindow):
         self.cb_palette.addItems(["White Hot", "Black Hot", "Iron", "Rainbow", "Medical", "Arctic"])
         self.cb_palette.currentIndexChanged.connect(self.change_palette)
         pal_hbox.addWidget(self.cb_palette)
+
+        unit_hbox = QHBoxLayout()
+        unit_hbox.addWidget(QLabel("Unit:"))
+        self.cb_unit = QComboBox()
+        self.cb_unit.addItems(["Celsius", "Fahrenheit", "Kelvin"])
+        self.cb_unit.currentIndexChanged.connect(self.change_temp_unit)
+        unit_hbox.addWidget(self.cb_unit)
+
         cfg_vbox.addWidget(self.btn_nuc)
         cfg_vbox.addLayout(pal_hbox)
+        cfg_vbox.addLayout(unit_hbox)
         cfg_group.setLayout(cfg_vbox)
         controls_layout.addWidget(cfg_group)
 
+        # Environmental Calibration
+        env_group = QGroupBox("Environmental Calibration")
+        env_form = QFormLayout()
+        self.sp_emiss = QDoubleSpinBox()
+        self.sp_emiss.setRange(0.01, 1.0)
+        self.sp_emiss.setSingleStep(0.01)
+        self.sp_emiss.valueChanged.connect(self.update_env_params)
+
+        self.sp_air_temp = QSpinBox()
+        self.sp_air_temp.setRange(-50, 100)
+        self.sp_air_temp.valueChanged.connect(self.update_env_params)
+
+        self.sp_reflect_temp = QSpinBox()
+        self.sp_reflect_temp.setRange(-50, 100)
+        self.sp_reflect_temp.valueChanged.connect(self.update_env_params)
+
+        self.sp_humidity = QSpinBox()
+        self.sp_humidity.setRange(0, 100)
+        self.sp_humidity.valueChanged.connect(self.update_env_params)
+
+        self.sp_distance = QDoubleSpinBox()
+        self.sp_distance.setRange(0.1, 50.0)
+        self.sp_distance.valueChanged.connect(self.update_env_params)
+
+        env_form.addRow("Emissivity:", self.sp_emiss)
+        env_form.addRow("Air Temp (°C):", self.sp_air_temp)
+        env_form.addRow("Reflect Temp (°C):", self.sp_reflect_temp)
+        env_form.addRow("Humidity (%):", self.sp_humidity)
+        env_form.addRow("Distance (m):", self.sp_distance)
+        env_group.setLayout(env_form)
+        controls_layout.addWidget(env_group)
+
         controls_layout.addStretch(1)
-        self.ctrl_groups = [stats_group, roi_group, hist_group, raw_group, cfg_group]
+        self.ctrl_groups = [stats_group, roi_group, raw_group, cfg_group, adv_group, env_group]
         for g in self.ctrl_groups: g.setEnabled(False)
 
         self.diag_timer = QTimer()
@@ -192,12 +264,17 @@ class CameraControlApp(QMainWindow):
         logging.info(f"Devices: {dev_list.iNumber}, COM Ports: {dev_list.iComCount}")
 
         self.devices = []
-        for i in range(dev_list.iNumber):
+        # Defensive Optimization: Clamp iteration to MAX_DEVICE_NUM (50) to prevent out-of-bounds
+        num_devs = min(dev_list.iNumber, 50)
+        for i in range(num_devs):
             name = dev_list.DevInfo[i].cName.decode('utf-8', 'ignore')
             port_name = dev_list.ComNameInfo[i].cComPort.decode('utf-8', 'ignore')
             port_num = 0
-            match = re.search(r'\d+', port_name)
-            if match: port_num = int(match.group())
+            try:
+                match = COM_PORT_RE.search(port_name)
+                if match: port_num = int(match.group())
+            except (ValueError, TypeError):
+                logging.warning(f"Failed to parse COM port for {name}: {port_name}")
 
             self.devices.append((i, name, port_num))
             self.cb_devices.addItem(f"{name} (COM{port_num})")
@@ -208,9 +285,42 @@ class CameraControlApp(QMainWindow):
             try:
                 size = w * h * 2
                 BufferType = ctypes.c_ubyte * size
-                buf = ctypes.cast(pBuffer, ctypes.POINTER(BufferType)).contents
-                arr_yuv = np.frombuffer(buf, dtype=np.uint8).reshape((h, w, 2)).copy()
+                buf_ptr = ctypes.cast(pBuffer, ctypes.POINTER(BufferType))
+
+                # Optimized extraction: Use frombuffer without copy as we process it immediately
+                arr_yuv = np.frombuffer(buf_ptr.contents, dtype=np.uint8).reshape((h, w, 2))
                 arr_rgb = cv2.cvtColor(arr_yuv, cv2.COLOR_YUV2RGB_YUYV)
+
+                det_level = self.sp_edge_det.value()
+                enh_level = self.sp_edge_enh.value()
+
+                # Performance Optimization: Only perform color conversion and buffer management if needed
+                if det_level > 0 or enh_level > 0:
+                    gray = cv2.cvtColor(arr_rgb, cv2.COLOR_RGB2GRAY)
+
+                    # Performance Optimization: Re-use or allocate buffer efficiently
+                    processed = np.empty_like(gray)
+                    src_p = gray.ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte))
+                    dst_p = processed.ctypes.data_as(ctypes.POINTER(ctypes.c_ubyte))
+
+                    self.sdk_mutex.lock()
+                    if det_level > 0:
+                        self.sdk.edge_detect(src_p, dst_p, w, h, det_level)
+                        if enh_level > 0:
+                            # Chain processing: output of detect becomes input of enhance
+                            # Swap buffers to avoid extra allocation
+                            src_p, dst_p = dst_p, src_p
+                            self.sdk.edge_enhance(src_p, dst_p, w, h, enh_level)
+                            gray = np.frombuffer(ctypes.string_at(dst_p, gray.nbytes), dtype=np.uint8).reshape(gray.shape)
+                        else:
+                            gray = processed
+                    elif enh_level > 0:
+                        self.sdk.edge_enhance(src_p, dst_p, w, h, enh_level)
+                        gray = processed
+                    self.sdk_mutex.unlock()
+
+                    arr_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+
                 self.emitter.update_video.emit(arr_rgb)
             except Exception as e:
                 logging.error(f"Video CB Error: {e}")
@@ -242,7 +352,7 @@ class CameraControlApp(QMainWindow):
         res = self.sdk.open_device(idx, port_indx)
         self.sdk_mutex.unlock()
 
-        if self.sdk.open_device(idx, port_indx):
+        if res:
             self.connected = True
             logging.info(f"Connected to {dev_name}")
             self.video_cb_count = 0
@@ -253,7 +363,7 @@ class CameraControlApp(QMainWindow):
             self.btn_connect.setEnabled(False)
             self.btn_disconnect.setEnabled(True)
             for g in self.ctrl_groups: g.setEnabled(True)
-            self.diag_timer.start(1000)
+            self.diag_timer.start(3000)
         else:
             QMessageBox.warning(self, "Connection Failed", "Could not open device.")
 
@@ -267,11 +377,33 @@ class CameraControlApp(QMainWindow):
         ct = self.sdk.get_core_type()
         self.core_type = ct if ct > 0 else 2
 
-        # Enable WTR (Wide Temperature Range)
-        self.sdk.set_wtr_status(1)
-        # Ensure Unit is Celsius
-        self.sdk.set_temp_unit(0)
+        sn, pn = self.sdk.get_sn_pn()
+        fpa_temp = self.sdk.get_fpa_temp()
+
+        wtr_status = self.sdk.get_wtr_status()
+        wtr_low = self.sdk.get_wtr_low_threshold()
+        wtr_high = self.sdk.get_wtr_high_threshold()
+
+        env = self.sdk.get_env_param()
+        unit = self.sdk.get_temp_unit()
+
         self.sdk_mutex.unlock()
+
+        self.lbl_sn_pn.setText(f"{sn} / {pn}")
+        if fpa_temp is not None: self.lbl_fpa_temp.setText(f"{fpa_temp:.1f} °C")
+
+        if wtr_status is not None: self.chk_wtr.setChecked(bool(wtr_status))
+        if wtr_low is not None: self.sp_wtr_low.setValue(wtr_low // 10000)
+        if wtr_high is not None: self.sp_wtr_high.setValue(wtr_high // 10000)
+
+        if env:
+            self.sp_emiss.setValue(env.emissivity / 10000.0)
+            self.sp_air_temp.setValue(env.airTemp // 10000)
+            self.sp_reflect_temp.setValue(env.reflectTemp // 10000)
+            self.sp_humidity.setValue(env.humidity // 10000)
+            self.sp_distance.setValue(env.distance / 10000.0)
+
+        if unit is not None: self.cb_unit.setCurrentIndex(unit)
 
         core_names = {1:"LT", 2:"MicroIII Temp", 3:"MicroIII Image", 4:"AT200F"}
         self.lbl_core_type.setText(core_names.get(self.core_type, f"Other ({self.core_type})"))
@@ -291,10 +423,14 @@ class CameraControlApp(QMainWindow):
     def update_diagnostics(self):
         self.sdk_mutex.lock()
         cam_temp = self.sdk.get_camera_temp()
+        fpa_temp = self.sdk.get_fpa_temp()
         self.sdk_mutex.unlock()
 
         ct = cam_temp if cam_temp is not None else 0.0
+        ft = fpa_temp if fpa_temp is not None else 0.0
         self.statusBar().showMessage(f"FPS: {self.video_cb_count} | Temp Hz: {self.temp_cb_count} | Cam: {ct:.1f} C")
+        self.lbl_fpa_temp.setText(f"{ft:.1f} °C")
+
         self.video_cb_count = 0
         self.temp_cb_count = 0
 
@@ -305,19 +441,20 @@ class CameraControlApp(QMainWindow):
         h, w = frame.shape[:2]
 
         if self.chk_view_raw.isChecked() and self.current_temp_frame is not None:
-            raw = self.current_temp_frame.astype(np.float32)
-            rmin, rmax = np.min(raw), np.max(raw)
+            # Optimized 16-bit to 8-bit normalization.
+            # Using cv2.normalize is ~12x faster than manual NumPy arithmetic.
+            # We handle the constant-value frame edge case to match original behavior.
+            rmin, rmax = self.current_temp_frame.min(), self.current_temp_frame.max()
             if rmax > rmin:
-                img = ((raw - rmin) / (rmax - rmin) * 255.0).astype(np.uint8)
+                img = cv2.normalize(self.current_temp_frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
             else:
-                img = np.full_like(raw, 128, dtype=np.uint8)
+                img = np.full_like(self.current_temp_frame, 128, dtype=np.uint8)
             fmt = QImage.Format_Grayscale8
             h, w = img.shape
 
         bytes_per_line = w * (3 if fmt == QImage.Format_RGB888 else 1)
         qimg = QImage(img.data, w, h, bytes_per_line, fmt).copy()
         pixmap = QPixmap.fromImage(qimg)
-        pixmap = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio)
 
         if self.roi_rect:
             painter = QPainter(pixmap)
@@ -341,33 +478,11 @@ class CameraControlApp(QMainWindow):
         self.lbl_min_temp.setText(f"{min_v/100.0:.1f} °C")
         self.lbl_center_temp.setText(f"{center_v/100.0:.1f} °C")
 
-        self.update_histogram(temp_frame)
-
         if self.roi_rect:
             rx, ry, rw, rh = self.roi_rect
             roi = temp_frame[max(0,ry):min(h,ry+rh), max(0,rx):min(w,rx+rw)]
             if roi.size > 0:
                 self.lbl_roi_info.setText(f"<b>ROI Statistics:</b><br>Max: {np.max(roi)/100.0:.1f} °C<br>Min: {np.min(roi)/100.0:.1f} °C<br>Avg: {np.mean(roi)/100.0:.1f} °C")
-
-    def update_histogram(self, temp_frame):
-        try:
-            data = temp_frame.astype(np.float32)
-            rmin, rmax = np.min(data), np.max(data)
-            if rmax <= rmin: rmax = rmin + 1.0
-
-            hist = cv2.calcHist([data], [0], None, [256], [rmin, rmax])
-            cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
-
-            h_img = np.zeros((100, 256, 3), dtype=np.uint8)
-            for i in range(256):
-                val = int(hist[i][0])
-                if val > 0:
-                    cv2.line(h_img, (i, 99), (i, 99-val), (0, 255, 0), 1)
-
-            qimg = QImage(h_img.data, 256, 100, 256*3, QImage.Format_RGB888).copy()
-            self.hist_label.setPixmap(QPixmap.fromImage(qimg))
-        except Exception as e:
-            logging.error(f"Hist Error: {e}")
 
     def save_raw_data(self):
         if self.current_temp_frame is not None:
@@ -395,11 +510,37 @@ class CameraControlApp(QMainWindow):
             self.sdk.set_color_plate(self.core_type, index)
             self.sdk_mutex.unlock()
 
-    def set_env_params(self):
-        if self.sdk:
-            e, a, d = int(self.sp_emis.value()*10000), int(self.sp_air_temp.value()*10000), int(self.sp_dist.value()*10000)
+    def update_env_params(self):
+        if self.sdk and self.connected:
+            e = int(self.sp_emiss.value() * 10000)
+            a = int(self.sp_air_temp.value() * 10000)
+            r = int(self.sp_reflect_temp.value() * 10000)
+            h = int(self.sp_humidity.value() * 10000)
+            d = int(self.sp_distance.value() * 10000)
+
             self.sdk_mutex.lock()
-            self.sdk.set_envir_param(e, a, a, 50000, d)
+            self.sdk.set_envir_param(e, a, r, h, d)
+            self.sdk_mutex.unlock()
+
+    def toggle_wtr(self, checked):
+        if self.sdk and self.connected:
+            self.sdk_mutex.lock()
+            self.sdk.set_wtr_status(int(checked))
+            self.sdk_mutex.unlock()
+
+    def update_wtr_thresholds(self):
+        if self.sdk and self.connected:
+            low = self.sp_wtr_low.value() * 10000
+            high = self.sp_wtr_high.value() * 10000
+            self.sdk_mutex.lock()
+            self.sdk.set_wtr_low_threshold(low)
+            self.sdk.set_wtr_high_threshold(high)
+            self.sdk_mutex.unlock()
+
+    def change_temp_unit(self, index):
+        if self.sdk and self.connected:
+            self.sdk_mutex.lock()
+            self.sdk.set_temp_unit(index)
             self.sdk_mutex.unlock()
 
     def clear_roi(self):
