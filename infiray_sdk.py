@@ -166,6 +166,57 @@ class InfiRaySDK:
         self.dll.sdk_set_wtr_status.restype = c_int
         self.dll.sdk_set_wtr_status.argtypes = [c_void_p, c_int]
 
+        self.dll.sdk_set_wtr_low_threshold.restype = c_int
+        self.dll.sdk_set_wtr_low_threshold.argtypes = [c_void_p, c_int]
+
+        self.dll.sdk_get_wtr_low_threshold.restype = c_int
+        self.dll.sdk_get_wtr_low_threshold.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.sdk_set_wtr_high_threshold.restype = c_int
+        self.dll.sdk_set_wtr_high_threshold.argtypes = [c_void_p, c_int]
+
+        self.dll.sdk_get_wtr_high_threshold.restype = c_int
+        self.dll.sdk_get_wtr_high_threshold.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.SetReflect.restype = c_int
+        self.dll.SetReflect.argtypes = [c_void_p, c_int]
+
+        self.dll.SetAirTemp.restype = c_int
+        self.dll.SetAirTemp.argtypes = [c_void_p, c_int]
+
+        self.dll.SetHumidity.restype = c_int
+        self.dll.SetHumidity.argtypes = [c_void_p, c_int]
+
+        self.dll.SetEmiss.restype = c_int
+        self.dll.SetEmiss.argtypes = [c_void_p, c_int]
+
+        self.dll.SetDistance.restype = c_int
+        self.dll.SetDistance.argtypes = [c_void_p, c_int]
+
+        self.dll.GetReflect.restype = c_int
+        self.dll.GetReflect.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.GetAirTemp.restype = c_int
+        self.dll.GetAirTemp.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.GetHumidity.restype = c_int
+        self.dll.GetHumidity.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.GetEmiss.restype = c_int
+        self.dll.GetEmiss.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.GetDistance.restype = c_int
+        self.dll.GetDistance.argtypes = [c_void_p, POINTER(c_int)]
+
+        self.dll.sdk_get_temp_coefficient.restype = c_int
+        self.dll.sdk_get_temp_coefficient.argtypes = [c_void_p, c_int, POINTER(c_short), POINTER(c_short)]
+
+        self.dll.sdk_edge_detect.restype = c_int
+        self.dll.sdk_edge_detect.argtypes = [c_void_p, POINTER(c_ubyte), POINTER(c_ubyte), c_int, c_int, c_int]
+
+        self.dll.sdk_edge_enhace.restype = c_int
+        self.dll.sdk_edge_enhace.argtypes = [c_void_p, POINTER(c_ubyte), POINTER(c_ubyte), c_int, c_int, c_int]
+
     def create(self):
         self.handle = self.dll.sdk_create()
         return self.handle
@@ -270,3 +321,71 @@ class InfiRaySDK:
 
     def set_wtr_status(self, status):
         return self.dll.sdk_set_wtr_status(self.handle, c_int(status)) == 0
+
+    def set_wtr_low_threshold(self, threshold):
+        return self.dll.sdk_set_wtr_low_threshold(self.handle, c_int(threshold)) == 0
+
+    def get_wtr_low_threshold(self):
+        val = c_int()
+        ret = self.dll.sdk_get_wtr_low_threshold(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def set_wtr_high_threshold(self, threshold):
+        return self.dll.sdk_set_wtr_high_threshold(self.handle, c_int(threshold)) == 0
+
+    def get_wtr_high_threshold(self):
+        val = c_int()
+        ret = self.dll.sdk_get_wtr_high_threshold(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def set_reflect(self, value):
+        return self.dll.SetReflect(self.handle, c_int(value)) == 0
+
+    def set_air_temp(self, value):
+        return self.dll.SetAirTemp(self.handle, c_int(value)) == 0
+
+    def set_humidity(self, value):
+        return self.dll.SetHumidity(self.handle, c_int(value)) == 0
+
+    def set_emiss(self, value):
+        return self.dll.SetEmiss(self.handle, c_int(value)) == 0
+
+    def set_distance(self, value):
+        return self.dll.SetDistance(self.handle, c_int(value)) == 0
+
+    def get_reflect(self):
+        val = c_int()
+        ret = self.dll.GetReflect(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_air_temp(self):
+        val = c_int()
+        ret = self.dll.GetAirTemp(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_humidity(self):
+        val = c_int()
+        ret = self.dll.GetHumidity(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_emiss(self):
+        val = c_int()
+        ret = self.dll.GetEmiss(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_distance(self):
+        val = c_int()
+        ret = self.dll.GetDistance(self.handle, byref(val))
+        return val.value if ret == 0 else None
+
+    def get_temp_coefficient(self, gain):
+        p1 = c_short()
+        p2 = c_short()
+        ret = self.dll.sdk_get_temp_coefficient(self.handle, c_int(gain), byref(p1), byref(p2))
+        return (p1.value, p2.value) if ret == 0 else None
+
+    def edge_detect(self, src_ptr, dst_ptr, width, height, level):
+        return self.dll.sdk_edge_detect(self.handle, src_ptr, dst_ptr, width, height, level)
+
+    def edge_enhance(self, src_ptr, dst_ptr, width, height, level):
+        return self.dll.sdk_edge_enhace(self.handle, src_ptr, dst_ptr, width, height, level)
