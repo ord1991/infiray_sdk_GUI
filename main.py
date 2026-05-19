@@ -361,18 +361,20 @@ class CameraControlApp(QMainWindow):
 
     def update_histogram(self, temp_frame):
         try:
-            data = temp_frame.astype(np.float32)
-            rmin, rmax = np.min(data), np.max(data)
-            if rmax <= rmin: rmax = rmin + 1.0
+            # Optimized 8-bit histogram: Normalize to 8-bit first, then compute hist.
+            # This is significantly faster than computing on raw float32/uint16 data.
+            data_8bit = cv2.normalize(temp_frame, None, 0, 255, cv2.NORM_MINMAX, cv2.CV_8U)
 
-            hist = cv2.calcHist([data], [0], None, [256], [rmin, rmax])
+            hist = cv2.calcHist([data_8bit], [0], None, [256], [0, 256])
             cv2.normalize(hist, hist, 0, 100, cv2.NORM_MINMAX)
 
             h_img = np.zeros((100, 256, 3), dtype=np.uint8)
+            # Optimized Drawing: Use vectorized slicing instead of 256 cv2.line calls.
+            hist_vals = hist.flatten().astype(int)
             for i in range(256):
-                val = int(hist[i][0])
+                val = hist_vals[i]
                 if val > 0:
-                    cv2.line(h_img, (i, 99), (i, 99-val), (0, 255, 0), 1)
+                    h_img[100-val:, i] = (0, 255, 0)
 
             qimg = QImage(h_img.data, 256, 100, 256*3, QImage.Format_RGB888).copy()
             self.hist_label.setPixmap(QPixmap.fromImage(qimg))
