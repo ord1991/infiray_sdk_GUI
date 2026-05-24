@@ -69,6 +69,8 @@ class CameraControlApp(QMainWindow):
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet("background-color: #000; color: #555; font-size: 20px; border: 2px solid #333;")
         self.video_label.setMinimumSize(640, 480)
+        self.video_label.setCursor(Qt.CrossCursor)
+        self.video_label.setToolTip("Click and drag to draw a Region of Interest (ROI) for temperature measurement.")
         self.video_label.mousePressEvent = self.mouse_press
         self.video_label.mouseMoveEvent = self.mouse_move
         self.video_label.mouseReleaseEvent = self.mouse_release
